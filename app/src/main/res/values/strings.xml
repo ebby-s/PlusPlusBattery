@@ -96,6 +96,11 @@
     <string name="enable_dark_mode">Enable dark mode</string>
     <string name="battery_type_battery_type">Battery Type (battery_type)</string>
     <string name="design_capacity_design_capacity">Design Capacity (design_capacity)</string>
+    <string name="remaining_charge_counter_generic">Remaining Charge Counter</string>
+    <string name="full_charge_capacity_generic">Full Charge Capacity</string>
+    <string name="design_capacity_generic">Design Capacity</string>
+    <string name="state_of_health">State of Health</string>
+    <string name="battery_type_generic">Battery Type</string>
     <string name="notification_permission_denied">Notification permission denied</string>
     <string name="show_in_floating_window">Show in floating window</string>
     <string name="overlay_permission_denied">Overlay permission denied</string>

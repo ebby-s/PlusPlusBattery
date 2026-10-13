@@ -29,8 +29,14 @@ import com.dijia1124.plusplusbattery.data.util.isDualBattery
 import com.dijia1124.plusplusbattery.data.util.normalizeQmax
 import com.dijia1124.plusplusbattery.data.util.readBatteryInfo
 import com.dijia1124.plusplusbattery.data.util.readBatteryLogMap
+import com.dijia1124.plusplusbattery.data.util.readChargeMah
+import com.dijia1124.plusplusbattery.data.util.readRootCycleCount
 import com.dijia1124.plusplusbattery.data.util.readTermCoeff
 import com.dijia1124.plusplusbattery.data.util.safeRootReadInt
+import com.dijia1124.plusplusbattery.data.util.detectRootBackend
+import com.dijia1124.plusplusbattery.data.util.RootBackend
+import com.dijia1124.plusplusbattery.data.util.BMS_PATH
+import com.dijia1124.plusplusbattery.data.util.BATTERY_PATH
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -105,13 +111,18 @@ class BatteryInfoRepository @Inject constructor(
                 ?: context.getString(R.string.estimating_full_charge_capacity)
         }
 
-    suspend fun getBasicBatteryInfo(): List<BatteryInfo> = withContext(Dispatchers.IO) {
+    suspend fun getBasicBatteryInfo(allowRootFallback: Boolean = false): List<BatteryInfo> = withContext(Dispatchers.IO) {
         val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, 0) ?: 0
         val temperature = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -999) ?: 0
         val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
         val health = intent?.getIntExtra(BatteryManager.EXTRA_HEALTH, 0) ?: 0
-        val cycleCount = intent?.getIntExtra(BatteryManager.EXTRA_CYCLE_COUNT, -1) ?: -1
+        var cycleCount = intent?.getIntExtra(BatteryManager.EXTRA_CYCLE_COUNT, -1) ?: -1
+        // Some devices don't report the cycle count through the framework, so fall
+        // back to the fuel-gauge sysfs node when running in root mode.
+        if (allowRootFallback && cycleCount < 0) {
+            cycleCount = readRootCycleCount() ?: cycleCount
+        }
         val isCelsius = isCelsiusFlow.first()
 
         listOf(
@@ -144,6 +155,13 @@ class BatteryInfoRepository @Inject constructor(
     }
 
     suspend fun getRootBatteryInfo(): List<BatteryInfo> = withContext(Dispatchers.IO) {
+        when (detectRootBackend()) {
+            RootBackend.OPLUS -> getOplusRootBatteryInfo()
+            RootBackend.GENERIC -> getGenericRootBatteryInfo()
+        }
+    }
+
+    private suspend fun getOplusRootBatteryInfo(): List<BatteryInfo> = withContext(Dispatchers.IO) {
         val calibMultiplier = calibFlow.first()
         val dualBattMultiplier = dualBattFlow.first()
         var rootModeVoltage0 = 0
@@ -166,7 +184,8 @@ class BatteryInfoRepository @Inject constructor(
             rootReadFailed = true
             val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
             rootModeVoltage0 = intent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) ?: 0
-            rootModeCurrent = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
+            // BatteryManager reports microamps; root entries are in mA
+            rootModeCurrent = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) / 1000
         } else {
             rootModeVoltage1 =
                 safeRootReadInt("bcc_parms", BCC_VOLTAGE_1_INDEX, {
@@ -177,7 +196,7 @@ class BatteryInfoRepository @Inject constructor(
 
             rootModeCurrent =
                 safeRootReadInt("bcc_parms", BCC_CURRENT_INDEX, {
-                    batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
+                    batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) / 1000
                 }) { rootReadFailed = true }
         }
 
@@ -194,7 +213,7 @@ class BatteryInfoRepository @Inject constructor(
                 IntentFilter(Intent.ACTION_BATTERY_CHANGED)
             )
 
-            (batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
+            (batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) / 1000.0
                     * dualBattMultiplier
                     * calibMultiplier
                     * (intent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0)
@@ -304,13 +323,84 @@ class BatteryInfoRepository @Inject constructor(
         )
     }
 
+    /**
+     * Root entries for devices without /sys/class/oplus_chg, read from the standard
+     * Linux power_supply nodes (e.g. Qualcomm fuel gauge on the OnePlus 6).
+     * charge_* nodes are in microampere-hours, voltage_now in microvolts and
+     * current_now in microamps.
+     */
+    private suspend fun getGenericRootBatteryInfo(): List<BatteryInfo> = withContext(Dispatchers.IO) {
+        val calibMultiplier = calibFlow.first()
+        val dualBattMultiplier = dualBattFlow.first()
+        val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+
+        val voltageMv: Int = readBatteryInfo("voltage_now", BATTERY_PATH)
+            ?.toLongOrNull()?.let { (it / 1000L).toInt() }
+            ?: (intent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) ?: 0)
+        val currentMa: Int = readBatteryInfo("current_now", BATTERY_PATH)
+            ?.toLongOrNull()?.let { (it / 1000L).toInt() }
+            ?: (batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) / 1000)
+        val power = voltageMv * currentMa * calibMultiplier * dualBattMultiplier / 1_000_000.0
+
+        val rm = readChargeMah("charge_counter", BMS_PATH)
+            ?: readChargeMah("charge_counter", BATTERY_PATH)
+        val fcc = readChargeMah("charge_full", BMS_PATH)
+            ?: readChargeMah("charge_full", BATTERY_PATH)
+        val design = readChargeMah("charge_full_design", BMS_PATH)
+            ?: readChargeMah("charge_full_design", BATTERY_PATH)
+        val soh = if (fcc != null && design != null && design > 0) {
+            fcc * 100.0 / design
+        } else null
+        val battType = readBatteryInfo("battery_type", BMS_PATH)
+        val unknown = context.getString(R.string.unknown)
+
+        listOf(
+            BatteryInfo(
+                BatteryInfoType.VOLTAGE,
+                "$voltageMv mV",
+                false
+            ),
+            BatteryInfo(
+                BatteryInfoType.CURRENT,
+                (currentMa * calibMultiplier).formatWithUnit("mA"),
+                false
+            ),
+            BatteryInfo(
+                BatteryInfoType.POWER,
+                power.formatWithUnit("W"),
+                false
+            ),
+            BatteryInfo(
+                BatteryInfoType.ROOT_REMAINING,
+                rm?.let { "$it mAh" } ?: unknown
+            ),
+            BatteryInfo(
+                BatteryInfoType.ROOT_FCC,
+                fcc?.let { "$it mAh" } ?: unknown
+            ),
+            BatteryInfo(
+                BatteryInfoType.ROOT_DESIGN_CAPACITY,
+                design?.let { "$it mAh" } ?: unknown
+            ),
+            BatteryInfo(
+                BatteryInfoType.ROOT_SOH,
+                soh?.let { "%.1f%%".format(it) } ?: unknown
+            ),
+            BatteryInfo(
+                BatteryInfoType.ROOT_BATTERY_TYPE,
+                battType ?: unknown
+            ),
+        )
+    }
+
     suspend fun getNonRootVoltCurrPwr(): List<BatteryInfo> = withContext(Dispatchers.IO) {
         val calibMultiplier = calibFlow.first()
         val dualBattMultiplier = dualBattFlow.first()
         val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val voltage = intent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) ?: 0
+        // BatteryManager reports current in microamperes; convert to milliamps
         val current =
-            batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) * calibMultiplier
+            batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) / 1000.0 * calibMultiplier
         val power = current * voltage * dualBattMultiplier / 1_000_000.0
 
         listOf(
@@ -323,8 +413,9 @@ class BatteryInfoRepository @Inject constructor(
     suspend fun getEstimatedFcc(savedEstimatedFcc: String): BatteryInfo =
         withContext(Dispatchers.IO) {
             val calibMultiplier = calibFlow.first()
+            // BatteryManager reports current in microamperes; convert to milliamps
             val currentNow =
-                batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) * calibMultiplier
+                batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) / 1000.0 * calibMultiplier
             val batteryLevel =
                 batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
 
@@ -459,8 +550,9 @@ class BatteryInfoRepository @Inject constructor(
 
     suspend fun getAvailableBatteryInfo(isRoot: Boolean, showOplus: Boolean): List<BatteryInfo> {
         return if (isRoot) {
-            val infoList = (getBasicBatteryInfo() + getRootBatteryInfo() + readCustomEntries()).toMutableList()
-            if (!showOplus) {
+            val infoList = (getBasicBatteryInfo(allowRootFallback = true) + getRootBatteryInfo() + readCustomEntries()).toMutableList()
+            // OPlus-only entries are meaningless without /sys/class/oplus_chg
+            if (!showOplus || detectRootBackend() != RootBackend.OPLUS) {
                 infoList.removeAll { it.type in OPLUS_TYPES }
             }
             infoList

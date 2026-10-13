@@ -33,6 +33,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.dijia1124.plusplusbattery.vm.BatteryInfoViewModel
 import com.dijia1124.plusplusbattery.R
+import com.dijia1124.plusplusbattery.data.util.RootBackend
 import com.dijia1124.plusplusbattery.vm.SettingsViewModel
 import com.dijia1124.plusplusbattery.ui.components.AppScaffold
 import androidx.core.net.toUri
@@ -64,6 +65,7 @@ fun SettingsContent(
     val dailyHistoryEnabled by settingsVM.dailyHistoryEnabled.collectAsState()
     val refreshInterval by settingsVM.refreshInterval.collectAsState()
     val showOplusFields by settingsVM.showOplusFields.collectAsState()
+    val rootBackend by settingsVM.rootBackend.collectAsState()
     var showMgr by remember { mutableStateOf(false) }
 
     Column(
@@ -196,23 +198,25 @@ fun SettingsContent(
                     )
                 },
                 {
-                    ListItem(
-                        headlineContent = {
-                            Text(text = stringResource(R.string.enable_oplus_fields), style = MaterialTheme.typography.bodyLarge)
-                        },
-                        leadingContent = {
-                            Icon(
-                                painter = painterResource(id = R.drawable.looks_one_24dp_1f1f1f_fill0_wght400_grad0_opsz24),
-                                contentDescription = null,
-                            )
-                        },
-                        trailingContent = {
-                            CustomSwitch(
-                                checked = showOplusFields,
-                                onCheckedChange = { settingsVM.setShowOplusFields(it) }
-                            )
-                        }
-                    )
+                    if (rootBackend == RootBackend.OPLUS) {
+                        ListItem(
+                            headlineContent = {
+                                Text(text = stringResource(R.string.enable_oplus_fields), style = MaterialTheme.typography.bodyLarge)
+                            },
+                            leadingContent = {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.looks_one_24dp_1f1f1f_fill0_wght400_grad0_opsz24),
+                                    contentDescription = null,
+                                )
+                            },
+                            trailingContent = {
+                                CustomSwitch(
+                                    checked = showOplusFields,
+                                    onCheckedChange = { settingsVM.setShowOplusFields(it) }
+                                )
+                            }
+                        )
+                    }
                 },
                 {
                     ListItem(
@@ -240,20 +244,22 @@ fun SettingsContent(
                     )
                 },
                 {
-                    ListItem(
-                        modifier = Modifier.clickable {
-                            if (isRootMode) {
-                                navController.navigate("battery_logcat_experiment")
+                    if (rootBackend == RootBackend.OPLUS) {
+                        ListItem(
+                            modifier = Modifier.clickable {
+                                if (isRootMode) {
+                                    navController.navigate("battery_logcat_experiment")
+                                }
+                                else context.showRootDeniedToast()},
+                            headlineContent = { Text(text = stringResource(R.string.get_from_logcat), style = MaterialTheme.typography.bodyLarge) },
+                            leadingContent = {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.science_24dp_1f1f1f_fill0_wght400_grad0_opsz24),
+                                    contentDescription = null,
+                                )
                             }
-                            else context.showRootDeniedToast()},
-                        headlineContent = { Text(text = stringResource(R.string.get_from_logcat), style = MaterialTheme.typography.bodyLarge) },
-                        leadingContent = {
-                            Icon(
-                                painter = painterResource(id = R.drawable.science_24dp_1f1f1f_fill0_wght400_grad0_opsz24),
-                                contentDescription = null,
-                            )
-                        }
-                    )
+                        )
+                    }
                 }
             )
         )

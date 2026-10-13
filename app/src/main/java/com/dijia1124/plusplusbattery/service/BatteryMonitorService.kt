@@ -9,6 +9,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ServiceInfo
+import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.dijia1124.plusplusbattery.data.repository.PrefsRepository
 import com.dijia1124.plusplusbattery.R
@@ -85,7 +87,14 @@ class BatteryMonitorService : Service() {
             return START_STICKY
         }
 
-        startForeground(notifId, buildNotification(getString(R.string.initializing)))
+        val notification = buildNotification(getString(R.string.initializing))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // dataSync foreground services are capped at 6h on Android 15;
+            // specialUse keeps the battery monitor running indefinitely.
+            startForeground(notifId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(notifId, notification)
+        }
         startUpdating()
         return START_STICKY
     }

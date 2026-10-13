@@ -27,5 +27,11 @@ enum class BatteryInfoType(
     OPLUS_MANU_DATE          ("battery_manu_date",         R.string.battery_manufacture_date_battery_manu_date),
     OPLUS_BATTERY_TYPE       ("battery_type",              R.string.battery_type_battery_type),
     OPLUS_DESIGN_CAPACITY    ("design_capacity",           R.string.design_capacity_design_capacity),
+    // Generic (non-OPlus) root entries read from standard Linux power_supply nodes
+    ROOT_REMAINING           ("root_remaining",            R.string.remaining_charge_counter_generic),
+    ROOT_FCC                 ("root_fcc",                  R.string.full_charge_capacity_generic),
+    ROOT_DESIGN_CAPACITY     ("root_design_capacity",      R.string.design_capacity_generic),
+    ROOT_SOH                 ("root_soh",                  R.string.state_of_health),
+    ROOT_BATTERY_TYPE        ("root_battery_type",         R.string.battery_type_generic),
     CUSTOM                   ("custom",                    R.string.custom_battery_info)
 }

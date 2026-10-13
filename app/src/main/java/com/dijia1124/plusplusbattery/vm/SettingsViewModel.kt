@@ -5,6 +5,8 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.dijia1124.plusplusbattery.data.repository.PrefsRepository
+import com.dijia1124.plusplusbattery.data.util.RootBackend
+import com.dijia1124.plusplusbattery.data.util.detectRootBackend
 import com.topjohnwu.superuser.Shell
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +28,9 @@ class SettingsViewModel @Inject constructor(
     private val _hasRoot = MutableStateFlow(false)
     val hasRoot: StateFlow<Boolean> = _hasRoot
 
+    private val _rootBackend = MutableStateFlow(RootBackend.GENERIC)
+    val rootBackend: StateFlow<RootBackend> = _rootBackend
+
     init {
         // check if the device has root access
         viewModelScope.launch {
@@ -34,6 +39,9 @@ class SettingsViewModel @Inject constructor(
             } catch (e: Exception) {
                 false
             }
+        }
+        viewModelScope.launch {
+            _rootBackend.value = detectRootBackend()
         }
     }
 

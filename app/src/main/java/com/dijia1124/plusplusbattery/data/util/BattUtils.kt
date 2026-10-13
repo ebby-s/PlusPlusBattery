@@ -20,6 +20,53 @@ import java.util.Locale
 
 private const val BCC_CURRENT_INDICES_LAST = 18
 private const val OPLUS_CHG_BATTERY_PATH = "/sys/class/oplus_chg/battery/"
+private const val OPLUS_CHG_DIR = "/sys/class/oplus_chg"
+
+// Standard Linux power_supply nodes used by non-OPlus (e.g. Qualcomm) devices.
+// On a OnePlus 6 (enchilada) the fuel gauge exposes FCC/design/cycle data under
+// /sys/class/power_supply/bms and the charger under /sys/class/power_supply/battery.
+const val BMS_PATH = "/sys/class/power_supply/bms/"
+const val BATTERY_PATH = "/sys/class/power_supply/battery/"
+
+/**
+ * Which root battery backend a device uses.
+ *
+ * - [OPLUS]   newer OnePlus/Oppo/Realme kernels exposing /sys/class/oplus_chg
+ * - [GENERIC] every other device, read through the standard power_supply nodes
+ */
+enum class RootBackend { OPLUS, GENERIC }
+
+@Volatile private var cachedRootBackend: RootBackend? = null
+
+/**
+ * Detects (once, then caches) which backend the device exposes. Requires root only
+ * because SELinux may hide /sys/class/oplus_chg from the app on OPlus devices.
+ */
+suspend fun detectRootBackend(): RootBackend {
+    cachedRootBackend?.let { return it }
+    val detected = withContext(Dispatchers.IO) {
+        try {
+            val out = Shell.cmd("[ -d $OPLUS_CHG_DIR ] && echo yes")
+                .exec().out.joinToString("").trim()
+            if (out == "yes") RootBackend.OPLUS else RootBackend.GENERIC
+        } catch (e: Exception) {
+            RootBackend.GENERIC
+        }
+    }
+    cachedRootBackend = detected
+    return detected
+}
+
+/** Reads a power_supply charge_* node (microampere-hours) and converts it to mAh. */
+suspend fun readChargeMah(field: String, basePath: String): Int? {
+    val raw = readBatteryInfo(field, basePath)?.toLongOrNull() ?: return null
+    return (raw / 1000L).toInt()
+}
+
+/** Reads the charge cycle count from whichever power_supply node provides it. */
+suspend fun readRootCycleCount(): Int? =
+    readBatteryInfo("cycle_count", BMS_PATH)?.toIntOrNull()
+        ?: readBatteryInfo("cycle_count", BATTERY_PATH)?.toIntOrNull()
 
 fun getStatusString(status: Int, context: Context): String = when (status) {
     BatteryManager.BATTERY_STATUS_CHARGING -> context.getString(R.string.charging)
@@ -249,7 +296,12 @@ fun normalizeQmax(rawQ: Int, fcc: Int?): Int {
 suspend fun saveCycleCountToHistory(context: Context, historyInfoRepository: HistoryInfoRepository) {
     withContext(Dispatchers.IO) {
         val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val cycleCount = intent?.getIntExtra(BatteryManager.EXTRA_CYCLE_COUNT, -1) ?: -1
+        var cycleCount = intent?.getIntExtra(BatteryManager.EXTRA_CYCLE_COUNT, -1) ?: -1
+        // Some devices (e.g. OnePlus 6 on LineageOS) don't expose the cycle count
+        // through the framework; fall back to the fuel-gauge sysfs node.
+        if (cycleCount < 0) {
+            cycleCount = readRootCycleCount() ?: cycleCount
+        }
         val date = System.currentTimeMillis()
         val dateString = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(date))
         val newInfo = HistoryInfo(
