@@ -24,6 +24,8 @@ import com.dijia1124.plusplusbattery.data.util.ROOT_MODE_KEY
 import com.dijia1124.plusplusbattery.data.util.SHOW_OPLUS_FIELDS
 import com.dijia1124.plusplusbattery.data.util.SHOW_SWITCH_ON_DASHBOARD
 import com.dijia1124.plusplusbattery.data.util.IS_CELSIUS
+import com.dijia1124.plusplusbattery.data.util.TRACKING_ENABLED
+import com.dijia1124.plusplusbattery.data.util.TRACKING_INTERVAL_KEY
 import com.dijia1124.plusplusbattery.data.util.dataStore
 import com.dijia1124.plusplusbattery.service.DailyHistoryWorker
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -185,5 +187,20 @@ class PrefsRepository @Inject constructor (
 
     suspend fun setIsCelsius(isCelsius: Boolean) {
         dataStore.edit { it[IS_CELSIUS] = isCelsius }
+    }
+
+    // Battery event tracking. Enabled by default so history builds up immediately.
+    val trackingEnabled: Flow<Boolean> =
+        dataStore.data.map { it[TRACKING_ENABLED] != false }
+
+    suspend fun setTrackingEnabled(enabled: Boolean) {
+        dataStore.edit { it[TRACKING_ENABLED] = enabled }
+    }
+
+    val trackingInterval: Flow<Int> =
+        dataStore.data.map { it[TRACKING_INTERVAL_KEY] ?: 60_000 }
+
+    suspend fun setTrackingInterval(intervalMs: Int) {
+        dataStore.edit { it[TRACKING_INTERVAL_KEY] = intervalMs }
     }
 }

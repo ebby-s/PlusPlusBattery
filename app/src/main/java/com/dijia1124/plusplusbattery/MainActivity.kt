@@ -32,6 +32,7 @@ import com.dijia1124.plusplusbattery.ui.screen.About
 import com.dijia1124.plusplusbattery.ui.screen.BatteryMonitor
 import com.dijia1124.plusplusbattery.ui.screen.BatteryMonitorSettings
 import com.dijia1124.plusplusbattery.ui.screen.Dashboard
+import com.dijia1124.plusplusbattery.ui.screen.Health
 import com.dijia1124.plusplusbattery.ui.screen.History
 import com.dijia1124.plusplusbattery.ui.screen.Settings
 import com.dijia1124.plusplusbattery.ui.screen.FloatingWindowSettings
@@ -39,7 +40,9 @@ import com.dijia1124.plusplusbattery.ui.screen.UniversalSupportLogcat
 import com.dijia1124.plusplusbattery.vm.BatteryInfoViewModel
 import com.dijia1124.plusplusbattery.vm.BatteryLogViewModel
 import com.dijia1124.plusplusbattery.vm.BatteryMonitorSettingsViewModel
+import com.dijia1124.plusplusbattery.vm.ChargeEventViewModel
 import com.dijia1124.plusplusbattery.vm.FloatingWindowSettingsViewModel
+import com.dijia1124.plusplusbattery.vm.HealthViewModel
 import com.dijia1124.plusplusbattery.vm.HistoryInfoViewModel
 import com.dijia1124.plusplusbattery.vm.SettingsViewModel
 import com.topjohnwu.superuser.Shell
@@ -50,13 +53,15 @@ class MainActivity : ComponentActivity() {
 
     // This list contains the top-level routes that will show the bottom navigation bar
     private val topLevelRoutes = listOf(
-        "dashboard", "battery_monitor", "history", "settings"
+        "dashboard", "battery_monitor", "history", "health", "settings"
     )
     private val settingsViewModel: SettingsViewModel by viewModels()
     private val battMonViewModel: BatteryMonitorSettingsViewModel by viewModels()
     private val floatingWindowSettingsViewModel: FloatingWindowSettingsViewModel by viewModels()
     private val batteryInfoViewModel: BatteryInfoViewModel by viewModels()
     private val historyInfoViewModel: HistoryInfoViewModel by viewModels()
+    private val chargeEventViewModel: ChargeEventViewModel by viewModels()
+    private val healthViewModel: HealthViewModel by viewModels()
     private val batteryLogViewModel: BatteryLogViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -100,8 +105,14 @@ class MainActivity : ComponentActivity() {
                         }
                         composable("history") {
                             History(
-                                historyInfoViewModel,
+                                chargeEventViewModel,
                                 stringResource(R.string.history)
+                            )
+                        }
+                        composable("health") {
+                            Health(
+                                healthViewModel,
+                                stringResource(R.string.health)
                             )
                         }
                         composable("settings")  {
@@ -170,6 +181,12 @@ fun BottomNavigationBar(navController: NavController) {
             selectedIcon = ImageVector.vectorResource(id = R.drawable.library_books_24dp_1f1f1f_fill1_wght400_grad0_opsz24),
             unselectedIcon = ImageVector.vectorResource(id = R.drawable.library_books_24dp_1f1f1f_fill0_wght400_grad0_opsz24),
             label = stringResource(R.string.nav_history)
+        ),
+        NavRoute(
+            "health",
+            selectedIcon = ImageVector.vectorResource(id = R.drawable.battery_profile_24dp_1f1f1f_fill0_wght400_grad0_opsz24),
+            unselectedIcon = ImageVector.vectorResource(id = R.drawable.battery_profile_24dp_1f1f1f_fill0_wght400_grad0_opsz24),
+            label = stringResource(R.string.health)
         ),
         NavRoute(
             "settings",

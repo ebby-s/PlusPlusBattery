@@ -66,6 +66,7 @@ fun SettingsContent(
     val refreshInterval by settingsVM.refreshInterval.collectAsState()
     val showOplusFields by settingsVM.showOplusFields.collectAsState()
     val rootBackend by settingsVM.rootBackend.collectAsState()
+    val trackingEnabled by settingsVM.trackingEnabled.collectAsState()
     var showMgr by remember { mutableStateOf(false) }
 
     Column(
@@ -161,6 +162,25 @@ fun SettingsContent(
                             CustomSwitch(
                                 checked = dailyHistoryEnabled,
                                 onCheckedChange = { settingsVM.setDailyHistoryEnabled(it, context) }
+                            )
+                        }
+                    )
+                },
+                {
+                    ListItem(
+                        headlineContent = {
+                            Text(text = stringResource(R.string.track_charge_events), style = MaterialTheme.typography.bodyLarge)
+                        },
+                        leadingContent = {
+                            Icon(
+                                painter = painterResource(id = R.drawable.battery_profile_24dp_1f1f1f_fill0_wght400_grad0_opsz24),
+                                contentDescription = null,
+                            )
+                        },
+                        trailingContent = {
+                            CustomSwitch(
+                                checked = trackingEnabled,
+                                onCheckedChange = { settingsVM.setTrackingEnabled(it, context) }
                             )
                         }
                     )

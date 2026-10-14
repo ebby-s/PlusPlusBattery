@@ -2,11 +2,14 @@ package com.dijia1124.plusplusbattery.vm
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.dijia1124.plusplusbattery.data.repository.PrefsRepository
 import com.dijia1124.plusplusbattery.data.util.RootBackend
 import com.dijia1124.plusplusbattery.data.util.detectRootBackend
+import com.dijia1124.plusplusbattery.service.BatteryTrackerService
 import com.topjohnwu.superuser.Shell
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -106,6 +109,31 @@ class SettingsViewModel @Inject constructor(
     fun setIsCelsius(isCelsius: Boolean) {
         viewModelScope.launch {
             prefs.setIsCelsius(isCelsius)
+        }
+    }
+
+    val trackingEnabled: StateFlow<Boolean> = prefs.trackingEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, initialValue = true)
+
+    fun setTrackingEnabled(enabled: Boolean, context: Context) {
+        viewModelScope.launch {
+            prefs.setTrackingEnabled(enabled)
+            val intent = Intent(context, BatteryTrackerService::class.java)
+            if (enabled) {
+                ContextCompat.startForegroundService(context, intent)
+            } else {
+                intent.action = BatteryTrackerService.ACTION_STOP
+                context.startService(intent)
+            }
+        }
+    }
+
+    val trackingInterval: StateFlow<Int> = prefs.trackingInterval
+        .stateIn(viewModelScope, SharingStarted.Eagerly, initialValue = 60_000)
+
+    fun setTrackingInterval(intervalMs: Int) {
+        viewModelScope.launch {
+            prefs.setTrackingInterval(intervalMs)
         }
     }
 }

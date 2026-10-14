@@ -1,11 +1,14 @@
 package com.dijia1124.plusplusbattery
 
 import android.app.Application
+import android.content.Intent
 import android.content.res.Configuration
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
 import com.dijia1124.plusplusbattery.data.repository.PrefsRepository
+import com.dijia1124.plusplusbattery.service.BatteryTrackerService
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +35,15 @@ class MainApplication : Application() {
                 Pair(follow, dark)
             }.collect { (follow, dark) ->
                 updateTheme(follow, dark)
+            }
+        }
+        applicationScope.launch {
+            // Tracking is on by default; start recording charge/discharge events.
+            if (prefsRepo.trackingEnabled.first()) {
+                ContextCompat.startForegroundService(
+                    this@MainApplication,
+                    Intent(this@MainApplication, BatteryTrackerService::class.java)
+                )
             }
         }
     }
