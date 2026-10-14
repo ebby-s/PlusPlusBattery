@@ -66,3 +66,42 @@ apksigner sign --ks <keystore> --out PlusPlusBattery-OnePlus6.apk aligned.apk
 
 Tested on OnePlus 6 (ONEPLUS A6003), LineageOS for microG 22.2 (Android 15),
 kernel 4.9.337, Magisk 30.7.
+
+---
+
+## Fork addition: charge/discharge event tracking, health & wear
+
+Adds an AccuBattery-style subsystem (clean-room, no third-party code copied).
+
+### Tracking (`BatteryTrackerService`)
+- Always-on `specialUse` foreground service, **enabled by default**.
+- Low power: fully event driven (battery/screen/power broadcasts) plus a slow
+  safety tick (60 s screen-on / 5 min screen-off) that holds **no wakelock**;
+  sample and flash writes are throttled.
+- mAh per session from the charge-counter delta, falling back to trapezoidal
+  current integration. Deep sleep from `elapsedRealtime - uptimeMillis` deltas.
+- Durable in-progress row survives process death/reboot; restarts on boot.
+
+### Session coalescing
+- Brief opposite-state blips (e.g. a charge-limit controller flickering at the
+  top of the range) do **not** split a session.
+- A new session starts only when the level moves >= 2% in the new direction, or
+  >= 50 mAh of charge has moved, or the opposite state persists for 10 minutes.
+- On restart, a session is resumed unless it has been idle > 30 min **and** the
+  level/counter moved materially.
+
+### History tab (replaces the old daily cycle-count view)
+- Every charge and discharge session: `start% -> end%`, mAh, duration, screen
+  on/off/deep sleep, wear, delete, and CSV export.
+
+### Health tab (new)
+- Capacity estimate from sessions `<15% -> >80%`, averaged over the last 5.
+- Estimated vs design capacity, health %, data-point count, total %/mAh.
+- Capacity-vs-time scatter with linear regression: loss/year and R².
+- Wear: per-session cycles (throughput / design capacity), cycles/day over
+  7/30/365 days with totals, cumulative-wear chart, plus the legacy cycle-count
+  chart.
+
+### Database
+- Room v1 -> v2 -> v3 with real migrations; existing cycle history preserved.
+

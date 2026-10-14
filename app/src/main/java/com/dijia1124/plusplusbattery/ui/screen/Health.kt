@@ -72,7 +72,7 @@ fun HealthContent(healthViewModel: HealthViewModel) {
                     )
                     InfoRow(
                         label = stringResource(R.string.total_charged),
-                        value = "${health.totalPercent}% · %,.0f mAh".format(health.totalMah)
+                        value = "${health.totalPercent}%% · %,.0f mAh".format(health.totalMah)
                     )
                 }
             })

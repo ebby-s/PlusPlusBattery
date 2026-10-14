@@ -15,6 +15,9 @@ interface ChargeEventDao {
     @Query("SELECT * FROM charge_events WHERE isComplete = 0 ORDER BY startTime DESC LIMIT 1")
     suspend fun getOngoingEvent(): ChargeEvent?
 
+    @Query("DELETE FROM charge_events WHERE isComplete = 0 AND uid != :keepUid")
+    suspend fun deleteIncompleteExcept(keepUid: Long)
+
     @Query("SELECT * FROM charge_events WHERE isComplete = 1 ORDER BY startTime ASC")
     suspend fun getAllCompleteEvents(): List<ChargeEvent>
 

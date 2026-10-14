@@ -38,7 +38,8 @@ data class ChargeEvent(
     val integratedUah: Long? = null,
     val designCapacityMah: Int? = null,
     val lastSampleElapsedMs: Long? = null,
-    val lastSampleUptimeMs: Long? = null
+    val lastSampleUptimeMs: Long? = null,
+    val lastSampleWallMs: Long? = null
 ) {
     companion object {
         const val TYPE_CHARGE = "CHARGE"

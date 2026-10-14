@@ -11,7 +11,7 @@ import com.dijia1124.plusplusbattery.data.model.HistoryInfo
 
 @Database(
     entities = [HistoryInfo::class, ChargeEvent::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class HistoryInfoDatabase : RoomDatabase() {
@@ -54,6 +54,12 @@ abstract class HistoryInfoDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `charge_events` ADD COLUMN `lastSampleWallMs` INTEGER")
+            }
+        }
+
         fun getDatabase(context: Context): HistoryInfoDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -61,7 +67,7 @@ abstract class HistoryInfoDatabase : RoomDatabase() {
                     HistoryInfoDatabase::class.java,
                     "history_info_database"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .fallbackToDestructiveMigration(false)
                     .build()
                 INSTANCE = instance

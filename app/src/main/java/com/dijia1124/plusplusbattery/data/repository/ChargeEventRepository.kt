@@ -14,6 +14,8 @@ class ChargeEventRepository(application: Application) {
 
     suspend fun getOngoingEvent(): ChargeEvent? = dao.getOngoingEvent()
 
+    suspend fun deleteIncompleteExcept(keepUid: Long) = dao.deleteIncompleteExcept(keepUid)
+
     suspend fun insertEvent(event: ChargeEvent): Long = dao.insertEvent(event)
 
     suspend fun updateEvent(event: ChargeEvent) = dao.updateEvent(event)

@@ -36,15 +36,15 @@ import kotlin.math.abs
 /**
  * Always-on service that records charge and discharge sessions.
  *
- * Design goals: accurate sessions with minimal power use.
- *  - Fully event driven: samples on ACTION_BATTERY_CHANGED, screen on/off and
- *    power connect/disconnect.
- *  - A slow safety-net tick (60s screen-on / 5min screen-off) that holds no
- *    wakelock, so it simply does not run while the CPU is suspended.
- *  - mAh is taken from the charge-counter delta (exact, sampling independent)
- *    with a current-integration fallback.
- *  - Deep sleep is derived from SystemClock.elapsedRealtime - uptimeMillis
- *    deltas, which stay correct across long suspended gaps.
+ * Power strategy: fully event driven (battery/screen/power broadcasts) plus a slow
+ * safety tick (60s screen-on / 5min screen-off) that holds no wakelock, so it simply
+ * does not run while the CPU is suspended. Flash writes are throttled.
+ *
+ * Session coalescing: brief opposite-state blips (for example a charge-limit
+ * controller flickering between charging and not-charging at the top of the range)
+ * do not split a session. A new session only begins when the opposite state is
+ * genuinely sustained, or when tracking resumes after a long gap with a materially
+ * different charge level/counter.
  */
 class BatteryTrackerService : Service() {
 
@@ -58,6 +58,17 @@ class BatteryTrackerService : Service() {
         // Throttle: ignore bursts of battery broadcasts and limit flash writes.
         private const val MIN_SAMPLE_GAP_MS = 2_000L
         private const val PERSIST_INTERVAL_MS = 15_000L
+        // A flip counts as a real boundary once the charge level has moved in the
+        // new direction, or enough charge has moved, or it has persisted far too
+        // long to still be a blip.
+        private const val FLIP_MIN_LEVEL_DELTA = 2
+        private const val FLIP_MIN_MAH_UAH = 50_000L
+        private const val FLIP_MAX_MS = 10 * 60_000L
+        // On restart, resume the session unless it has been idle this long AND the
+        // level/counter moved materially.
+        private const val LONG_GAP_MS = 30 * 60_000L
+        private const val LONG_GAP_LEVEL_DELTA = 3
+        private const val LONG_GAP_MAH_UAH = 30_000L
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -79,6 +90,12 @@ class BatteryTrackerService : Service() {
     private var intervalMs = DEFAULT_INTERVAL_MS
     private var designCapacityMah: Int? = null
     private var designCapacityLoaded = false
+
+    // Pending opposite-state observation, used to coalesce blips.
+    private var pendingFlipElapsed: Long? = null
+    private var pendingFlipWall: Long? = null
+    private var pendingFlipLevel: Int? = null
+    private var pendingFlipCounter: Long? = null
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
@@ -154,7 +171,6 @@ class BatteryTrackerService : Service() {
     // ---------------------------------------------------------------- loop
 
     private suspend fun runLoop() {
-        // Recover an in-progress session left over from a previous process/reboot.
         restoreOngoing()
         sample()
         while (scope.isActive) {
@@ -166,13 +182,34 @@ class BatteryTrackerService : Service() {
 
     private suspend fun restoreOngoing() {
         val existing = eventRepo.getOngoingEvent() ?: return
-        ongoing = existing
+        // Drop any orphaned in-progress rows left behind by an earlier crash.
+        eventRepo.deleteIncompleteExcept(existing.uid)
+
         isScreenOn = (getSystemService(Context.POWER_SERVICE) as android.os.PowerManager).isInteractive
-        screenOnSinceElapsed = if (isScreenOn) SystemClock.elapsedRealtime() else null
+        val nowWall = System.currentTimeMillis()
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val st = readState()
+        val referenceWall = existing.lastSampleWallMs ?: existing.startTime
+        val gap = nowWall - referenceWall
+        val levelMoved = abs(st.level - existing.startLevel) >= LONG_GAP_LEVEL_DELTA
+        val counterMoved = if (existing.startCounterUah != null && st.counterUah != null) {
+            abs(st.counterUah - existing.startCounterUah) >= LONG_GAP_MAH_UAH
+        } else false
+
+        if (gap >= LONG_GAP_MS && (levelMoved || counterMoved)) {
+            // Too much changed while we were away to be one continuous session.
+            finalizeEvent(existing, referenceWall, existing.startLevel, existing.startCounterUah, nowElapsed)
+            ongoing = null
+            startEvent(st, nowWall, nowElapsed, SystemClock.uptimeMillis())
+            return
+        }
+
+        ongoing = existing
+        screenOnSinceElapsed = if (isScreenOn) nowElapsed else null
         // We cannot recover time deltas across a reboot; start fresh from now.
-        lastElapsedMs = SystemClock.elapsedRealtime()
+        lastElapsedMs = nowElapsed
         lastUptimeMs = SystemClock.uptimeMillis()
-        lastCurrentUa = readCurrentUa()
+        lastCurrentUa = st.currentUa
     }
 
     // ---------------------------------------------------------------- sampling
@@ -204,7 +241,8 @@ class BatteryTrackerService : Service() {
             deepSleepMs = ev.deepSleepMs + deepSleepDelta,
             integratedUah = (ev.integratedUah ?: 0L) + integratedDelta.toLong(),
             lastSampleElapsedMs = nowElapsed,
-            lastSampleUptimeMs = nowUptime
+            lastSampleUptimeMs = nowUptime,
+            lastSampleWallMs = nowWall
         )
 
         lastElapsedMs = nowElapsed
@@ -212,70 +250,143 @@ class BatteryTrackerService : Service() {
         lastCurrentUa = st.currentUa
 
         val evCharging = updated.type == ChargeEvent.TYPE_CHARGE
-        if (st.charging != evCharging) {
-            val finished = finalizeEvent(updated, st, nowWall, nowElapsed)
+        if (st.charging == evCharging) {
+            // Same direction: continue the session and clear any pending flip.
+            clearPendingFlip()
+            ongoing = updated
+            persistThrottled(updated, nowElapsed)
+            return
+        }
+
+        // Opposite state observed.
+        if (pendingFlipElapsed == null) {
+            pendingFlipElapsed = nowElapsed
+            pendingFlipWall = nowWall
+            pendingFlipLevel = st.level
+            pendingFlipCounter = st.counterUah
+        }
+        val persisted = nowElapsed - (pendingFlipElapsed ?: nowElapsed)
+        val flipLevel = pendingFlipLevel ?: st.level
+        val levelDelta = if (st.charging) st.level - flipLevel else flipLevel - st.level
+        val hasCounter = pendingFlipCounter != null && st.counterUah != null
+        val movedUah = if (hasCounter) {
+            abs(st.counterUah!! - pendingFlipCounter!!)
+        } else 0L
+        val significant = levelDelta >= FLIP_MIN_LEVEL_DELTA ||
+            movedUah >= FLIP_MIN_MAH_UAH ||
+            persisted >= FLIP_MAX_MS
+
+        if (significant) {
+            // Genuine boundary: close the session at the moment the flip began and
+            // open the new one there.
+            val endWall = pendingFlipWall ?: nowWall
+            val endLevel = pendingFlipLevel ?: st.level
+            val endCounter = pendingFlipCounter
+            val endElapsed = pendingFlipElapsed ?: nowElapsed
+            val finished = finalizeEvent(updated, endWall, endLevel, endCounter, endElapsed)
             eventRepo.updateEvent(finished)
             ongoing = null
-            startEvent(st, nowWall, nowElapsed, nowUptime)
+            clearPendingFlip()
+            startEvent(
+                charging = st.charging,
+                level = endLevel,
+                counterUah = endCounter,
+                currentUa = st.currentUa,
+                startWall = endWall,
+                startElapsed = endElapsed,
+                startUptime = nowUptime
+            )
         } else {
+            // Blip: keep accumulating into the current session.
             ongoing = updated
-            if (nowElapsed - lastPersistElapsedMs >= PERSIST_INTERVAL_MS) {
-                lastPersistElapsedMs = nowElapsed
-                eventRepo.updateEvent(updated)
-                updateNotification(updated)
-            }
+            persistThrottled(updated, nowElapsed)
+        }
+    }
+
+    private fun clearPendingFlip() {
+        pendingFlipElapsed = null
+        pendingFlipWall = null
+        pendingFlipLevel = null
+        pendingFlipCounter = null
+    }
+
+    private suspend fun persistThrottled(ev: ChargeEvent, nowElapsed: Long) {
+        if (nowElapsed - lastPersistElapsedMs >= PERSIST_INTERVAL_MS) {
+            lastPersistElapsedMs = nowElapsed
+            eventRepo.updateEvent(ev)
+            updateNotification(ev)
         }
     }
 
     private suspend fun startEvent(
         st: BatteryState,
-        nowWall: Long,
-        nowElapsed: Long,
-        nowUptime: Long
+        startWall: Long,
+        startElapsed: Long,
+        startUptime: Long
+    ) = startEvent(
+        charging = st.charging,
+        level = st.level,
+        counterUah = st.counterUah,
+        currentUa = st.currentUa,
+        startWall = startWall,
+        startElapsed = startElapsed,
+        startUptime = startUptime
+    )
+
+    private suspend fun startEvent(
+        charging: Boolean,
+        level: Int,
+        counterUah: Long?,
+        currentUa: Long,
+        startWall: Long,
+        startElapsed: Long,
+        startUptime: Long
     ) {
         if (!designCapacityLoaded) {
             designCapacityMah = runCatching { readChargeMah("charge_full_design", BMS_PATH) }.getOrNull()
             designCapacityLoaded = true
         }
         val event = ChargeEvent(
-            type = if (st.charging) ChargeEvent.TYPE_CHARGE else ChargeEvent.TYPE_DISCHARGE,
-            startTime = nowWall,
-            startLevel = st.level,
-            startCounterUah = st.counterUah,
+            type = if (charging) ChargeEvent.TYPE_CHARGE else ChargeEvent.TYPE_DISCHARGE,
+            startTime = startWall,
+            startLevel = level,
+            startCounterUah = counterUah,
             screenOnMs = 0,
             deepSleepMs = 0,
             integratedUah = 0,
             designCapacityMah = designCapacityMah,
             isComplete = false,
-            lastSampleElapsedMs = nowElapsed,
-            lastSampleUptimeMs = nowUptime
+            lastSampleElapsedMs = startElapsed,
+            lastSampleUptimeMs = startUptime,
+            lastSampleWallMs = startWall
         )
-        lastElapsedMs = nowElapsed
-        lastUptimeMs = nowUptime
-        lastCurrentUa = st.currentUa
-        screenOnSinceElapsed = if (isScreenOn) nowElapsed else null
-        ongoing = event
-        eventRepo.insertEvent(event)
+        lastElapsedMs = startElapsed
+        lastUptimeMs = startUptime
+        lastCurrentUa = currentUa
+        lastPersistElapsedMs = startElapsed
+        screenOnSinceElapsed = if (isScreenOn) startElapsed else null
+        val rowId = eventRepo.insertEvent(event)
+        ongoing = event.copy(uid = rowId)
     }
 
     private fun finalizeEvent(
         ev: ChargeEvent,
-        st: BatteryState,
-        nowWall: Long,
-        nowElapsed: Long
+        endWall: Long,
+        endLevel: Int,
+        endCounterUah: Long?,
+        endElapsed: Long
     ): ChargeEvent {
-        // Close an open screen-on interval.
         var screenOnMs = ev.screenOnMs
         screenOnSinceElapsed?.let { start ->
-            if (nowElapsed > start) screenOnMs += nowElapsed - start
+            if (endElapsed > start) screenOnMs += endElapsed - start
         }
 
-        val duration = (nowWall - ev.startTime).coerceAtLeast(0L)
+        val duration = (endWall - ev.startTime).coerceAtLeast(0L)
         val deepSleep = ev.deepSleepMs.coerceIn(0L, duration)
         val screenOff = (duration - screenOnMs - deepSleep).coerceAtLeast(0L)
-        val deltaLevel = st.level - ev.startLevel
+        val deltaLevel = endLevel - ev.startLevel
 
-        val counterMah = counterDeltaMah(ev.startCounterUah, st.counterUah, ev.designCapacityMah)
+        val counterMah = counterDeltaMah(ev.startCounterUah, endCounterUah, ev.designCapacityMah)
         val integratedMah = (ev.integratedUah ?: 0L).let { if (it == 0L) null else abs(it) / 1000.0 }
         val mah: Double?
         val source: String?
@@ -290,9 +401,9 @@ class BatteryTrackerService : Service() {
         } else null
 
         return ev.copy(
-            endTime = nowWall,
+            endTime = endWall,
             durationMs = duration,
-            endLevel = st.level,
+            endLevel = endLevel,
             deltaLevel = deltaLevel,
             mah = mah,
             mahSource = source,
@@ -300,7 +411,8 @@ class BatteryTrackerService : Service() {
             screenOffMs = screenOff,
             deepSleepMs = deepSleep,
             wearCycles = wear,
-            endCounterUah = st.counterUah,
+            endCounterUah = endCounterUah,
+            lastSampleWallMs = endWall,
             isComplete = true
         )
     }
@@ -308,7 +420,8 @@ class BatteryTrackerService : Service() {
     private suspend fun finalizeOngoing() {
         val ev = ongoing ?: eventRepo.getOngoingEvent() ?: return
         val st = readState()
-        val finished = finalizeEvent(ev, st, System.currentTimeMillis(), SystemClock.elapsedRealtime())
+        val nowWall = System.currentTimeMillis()
+        val finished = finalizeEvent(ev, nowWall, st.level, st.counterUah, SystemClock.elapsedRealtime())
         eventRepo.updateEvent(finished)
         ongoing = null
     }
