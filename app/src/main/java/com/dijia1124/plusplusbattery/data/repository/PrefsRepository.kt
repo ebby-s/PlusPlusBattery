@@ -26,6 +26,8 @@ import com.dijia1124.plusplusbattery.data.util.SHOW_SWITCH_ON_DASHBOARD
 import com.dijia1124.plusplusbattery.data.util.IS_CELSIUS
 import com.dijia1124.plusplusbattery.data.util.TRACKING_ENABLED
 import com.dijia1124.plusplusbattery.data.util.TRACKING_INTERVAL_KEY
+import com.dijia1124.plusplusbattery.data.util.HEALTH_MIN_START_LEVEL
+import com.dijia1124.plusplusbattery.data.util.HEALTH_MIN_END_LEVEL
 import com.dijia1124.plusplusbattery.data.util.dataStore
 import com.dijia1124.plusplusbattery.service.DailyHistoryWorker
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -202,5 +204,20 @@ class PrefsRepository @Inject constructor (
 
     suspend fun setTrackingInterval(intervalMs: Int) {
         dataStore.edit { it[TRACKING_INTERVAL_KEY] = intervalMs }
+    }
+
+    // Charge-session thresholds used for the health capacity estimate.
+    val healthMinStartLevel: Flow<Int> =
+        dataStore.data.map { it[HEALTH_MIN_START_LEVEL] ?: 15 }
+
+    suspend fun setHealthMinStartLevel(level: Int) {
+        dataStore.edit { it[HEALTH_MIN_START_LEVEL] = level }
+    }
+
+    val healthMinEndLevel: Flow<Int> =
+        dataStore.data.map { it[HEALTH_MIN_END_LEVEL] ?: 80 }
+
+    suspend fun setHealthMinEndLevel(level: Int) {
+        dataStore.edit { it[HEALTH_MIN_END_LEVEL] = level }
     }
 }

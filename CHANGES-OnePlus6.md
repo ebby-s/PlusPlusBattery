@@ -96,6 +96,7 @@ Adds an AccuBattery-style subsystem (clean-room, no third-party code copied).
 
 ### Health tab (new)
 - Capacity estimate from sessions `<15% -> >80%`, averaged over the last 5.
+- The thresholds are user-configurable in Settings (default 15% / 80%).
 - Estimated vs design capacity, health %, data-point count, total %/mAh.
 - Capacity-vs-time scatter with linear regression: loss/year and R².
 - Wear: per-session cycles (throughput / design capacity), cycles/day over

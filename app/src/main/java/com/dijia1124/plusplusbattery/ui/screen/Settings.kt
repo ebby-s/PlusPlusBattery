@@ -67,6 +67,9 @@ fun SettingsContent(
     val showOplusFields by settingsVM.showOplusFields.collectAsState()
     val rootBackend by settingsVM.rootBackend.collectAsState()
     val trackingEnabled by settingsVM.trackingEnabled.collectAsState()
+    val healthMinStart by settingsVM.healthMinStartLevel.collectAsState()
+    val healthMinEnd by settingsVM.healthMinEndLevel.collectAsState()
+    var showHealthThresholds by remember { mutableStateOf(false) }
     var showMgr by remember { mutableStateOf(false) }
 
     Column(
@@ -181,6 +184,35 @@ fun SettingsContent(
                             CustomSwitch(
                                 checked = trackingEnabled,
                                 onCheckedChange = { settingsVM.setTrackingEnabled(it, context) }
+                            )
+                        }
+                    )
+                }
+            )
+        )
+        Spacer(Modifier.height(16.dp))
+        CardGroup(
+            title = { CardGroupTitle(text = context.getString(R.string.health)) },
+            content = listOf(
+                {
+                    ListItem(
+                        modifier = Modifier.clickable { showHealthThresholds = true },
+                        headlineContent = {
+                            Text(
+                                text = stringResource(R.string.health_estimate_thresholds),
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        },
+                        supportingContent = {
+                            Text(
+                                text = stringResource(R.string.threshold_summary, healthMinStart, healthMinEnd),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        },
+                        leadingContent = {
+                            Icon(
+                                painter = painterResource(id = R.drawable.battery_profile_24dp_1f1f1f_fill0_wght400_grad0_opsz24),
+                                contentDescription = null,
                             )
                         }
                     )
@@ -335,7 +367,89 @@ fun SettingsContent(
                 showMgr = false
             }
         }
+
+        if (showHealthThresholds) {
+            HealthThresholdDialog(
+                initialStart = healthMinStart,
+                initialEnd = healthMinEnd,
+                onApply = { start, end ->
+                    settingsVM.setHealthMinStartLevel(start)
+                    settingsVM.setHealthMinEndLevel(end)
+                },
+                onDismiss = { showHealthThresholds = false }
+            )
+        }
     }
+}
+
+@Composable
+fun HealthThresholdDialog(
+    initialStart: Int,
+    initialEnd: Int,
+    onApply: (Int, Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var start by remember { mutableIntStateOf(initialStart) }
+    var end by remember { mutableIntStateOf(initialEnd) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.health_estimate_thresholds)) },
+        text = {
+            Column {
+                Text(
+                    text = stringResource(R.string.health_thresholds_info),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    text = stringResource(R.string.start_level_below, start),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Slider(
+                    value = start.toFloat(),
+                    onValueChange = { v ->
+                        start = v.roundToInt().coerceIn(0, 50)
+                        if (start >= end) end = (start + 1).coerceAtMost(100)
+                    },
+                    valueRange = 0f..50f,
+                    steps = 49
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.end_level_above, end),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Slider(
+                    value = end.toFloat(),
+                    onValueChange = { v ->
+                        end = v.roundToInt().coerceIn(50, 100)
+                        if (end <= start) start = (end - 1).coerceAtLeast(0)
+                    },
+                    valueRange = 50f..100f,
+                    steps = 49
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                onApply(start, end)
+                onDismiss()
+            }) {
+                Text(stringResource(R.string.save))
+            }
+        },
+        dismissButton = {
+            Button(onClick = {
+                start = 15
+                end = 80
+                onApply(15, 80)
+                onDismiss()
+            }) {
+                Text(stringResource(R.string.reset))
+            }
+        }
+    )
 }
 
 @Composable

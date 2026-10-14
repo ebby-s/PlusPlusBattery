@@ -50,12 +50,16 @@ private const val MS_PER_YEAR = 365.25 * MS_PER_DAY
  * (below 15% to above 80%), the same approach AccuBattery documents. The full
  * capacity is charge added divided by the fraction of the battery it filled.
  */
-fun computeHealth(events: List<ChargeEvent>): HealthSummary {
+fun computeHealth(
+    events: List<ChargeEvent>,
+    minStartLevel: Int = 15,
+    minEndLevel: Int = 80
+): HealthSummary {
     val qualifying = events.filter {
         it.isComplete &&
             it.type == ChargeEvent.TYPE_CHARGE &&
-            it.startLevel <= 15 &&
-            (it.endLevel ?: -1) >= 80 &&
+            it.startLevel <= minStartLevel &&
+            (it.endLevel ?: -1) >= minEndLevel &&
             it.mah != null &&
             (it.deltaLevel ?: 0) > 0
     }.sortedBy { it.startTime }

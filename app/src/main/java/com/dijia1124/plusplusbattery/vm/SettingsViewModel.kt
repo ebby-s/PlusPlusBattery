@@ -136,4 +136,18 @@ class SettingsViewModel @Inject constructor(
             prefs.setTrackingInterval(intervalMs)
         }
     }
+
+    val healthMinStartLevel: StateFlow<Int> = prefs.healthMinStartLevel
+        .stateIn(viewModelScope, SharingStarted.Eagerly, initialValue = 15)
+
+    fun setHealthMinStartLevel(level: Int) = viewModelScope.launch {
+        prefs.setHealthMinStartLevel(level)
+    }
+
+    val healthMinEndLevel: StateFlow<Int> = prefs.healthMinEndLevel
+        .stateIn(viewModelScope, SharingStarted.Eagerly, initialValue = 80)
+
+    fun setHealthMinEndLevel(level: Int) = viewModelScope.launch {
+        prefs.setHealthMinEndLevel(level)
+    }
 }

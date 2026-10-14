@@ -57,6 +57,18 @@ class BatteryStatsMathTest {
     }
 
     @Test
+    fun healthRespectsCustomThresholds() {
+        val events = listOf(
+            chargeEvent(30, 60, 1000.0),
+            chargeEvent(10, 90, 2500.0)
+        )
+        // Relaxed thresholds: both sessions qualify.
+        assertEquals(2, computeHealth(events, minStartLevel = 35, minEndLevel = 50).dataPointCount)
+        // Strict thresholds: neither qualifies.
+        assertEquals(0, computeHealth(events, minStartLevel = 5, minEndLevel = 95).dataPointCount)
+    }
+
+    @Test
     fun linearRegressionFitsPerfectLine() {
         val points = (0..10).map { it.toDouble() to (2.0 * it + 1.0) }
         val reg = linearRegression(points)
