@@ -30,6 +30,7 @@ import com.dijia1124.plusplusbattery.data.util.normalizeQmax
 import com.dijia1124.plusplusbattery.data.util.readBatteryInfo
 import com.dijia1124.plusplusbattery.data.util.readBatteryLogMap
 import com.dijia1124.plusplusbattery.data.util.readChargeMah
+import com.dijia1124.plusplusbattery.data.util.readRootFiles
 import com.dijia1124.plusplusbattery.data.util.readRootCycleCount
 import com.dijia1124.plusplusbattery.data.util.readTermCoeff
 import com.dijia1124.plusplusbattery.data.util.safeRootReadInt
@@ -334,24 +335,34 @@ class BatteryInfoRepository @Inject constructor(
         val dualBattMultiplier = dualBattFlow.first()
         val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
 
-        val voltageMv: Int = readBatteryInfo("voltage_now", BATTERY_PATH)
-            ?.toLongOrNull()?.let { (it / 1000L).toInt() }
+        // Read every root-only node in a single batched call.
+        val paths = listOf(
+            BATTERY_PATH + "voltage_now",
+            BATTERY_PATH + "current_now",
+            BMS_PATH + "charge_counter",
+            BATTERY_PATH + "charge_counter",
+            BMS_PATH + "charge_full",
+            BATTERY_PATH + "charge_full",
+            BMS_PATH + "charge_full_design",
+            BATTERY_PATH + "charge_full_design",
+            BMS_PATH + "battery_type"
+        )
+        val v = readRootFiles(paths)
+        fun mah(index: Int): Int? = v[index]?.toLongOrNull()?.let { (it / 1000L).toInt() }
+
+        val voltageMv: Int = v[0]?.toLongOrNull()?.let { (it / 1000L).toInt() }
             ?: (intent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) ?: 0)
-        val currentMa: Int = readBatteryInfo("current_now", BATTERY_PATH)
-            ?.toLongOrNull()?.let { (it / 1000L).toInt() }
+        val currentMa: Int = v[1]?.toLongOrNull()?.let { (it / 1000L).toInt() }
             ?: (batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) / 1000)
         val power = voltageMv * currentMa * calibMultiplier * dualBattMultiplier / 1_000_000.0
 
-        val rm = readChargeMah("charge_counter", BMS_PATH)
-            ?: readChargeMah("charge_counter", BATTERY_PATH)
-        val fcc = readChargeMah("charge_full", BMS_PATH)
-            ?: readChargeMah("charge_full", BATTERY_PATH)
-        val design = readChargeMah("charge_full_design", BMS_PATH)
-            ?: readChargeMah("charge_full_design", BATTERY_PATH)
+        val rm = mah(2) ?: mah(3)
+        val fcc = mah(4) ?: mah(5)
+        val design = mah(6) ?: mah(7)
         val soh = if (fcc != null && design != null && design > 0) {
             fcc * 100.0 / design
         } else null
-        val battType = readBatteryInfo("battery_type", BMS_PATH)
+        val battType = v[8]
         val unknown = context.getString(R.string.unknown)
 
         listOf(

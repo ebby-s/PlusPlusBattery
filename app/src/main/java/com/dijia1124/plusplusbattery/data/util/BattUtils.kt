@@ -123,20 +123,49 @@ fun formatTemperatureAsInt(temperature: Float, isCelsius: Boolean): String {
     }
 }
 
-suspend fun readBatteryInfo(field: String, basePath: String = OPLUS_CHG_BATTERY_PATH): String? = withContext(Dispatchers.IO) {
+suspend fun readBatteryInfo(field: String, basePath: String = OPLUS_CHG_BATTERY_PATH): String? =
+    readRootFile(basePath + field)
+
+/**
+ * Reads one root-only sysfs file.
+ *
+ * libsu caches a shell on first use; if that shell was obtained before the root
+ * grant (for example a su request that raced the Magisk prompt while the device
+ * was locked), [SuFileInputStream] refuses to read and everything comes back
+ * empty. When the cached shell is not root we fall back to an explicit `su -c`.
+ */
+suspend fun readRootFile(path: String): String? = readRootFiles(listOf(path)).firstOrNull()
+
+/**
+ * Reads several root-only files at once. Uses libsu's stream when the shell is
+ * root, otherwise a single `su -c` invocation, so a non-root cached shell does
+ * not cost one process spawn per file.
+ */
+suspend fun readRootFiles(paths: List<String>): List<String?> = withContext(Dispatchers.IO) {
+    val rootShell = try { Shell.getShell().isRoot } catch (_: Exception) { false }
+    if (rootShell) {
+        return@withContext paths.map { p ->
+            try {
+                SuFileInputStream.open(p).bufferedReader().use { it.readText().trim() }
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
     try {
-        SuFileInputStream.open(basePath + field).bufferedReader().use { it.readText().trim() }
-    } catch (e: IOException) {
-        null
+        val marker = "__PPB_MARK__"
+        val script = paths.joinToString(" ") { "cat \"$it\" 2>/dev/null; echo $marker" }
+        val out = Shell.cmd("su -c '$script'").exec().out.joinToString("\n")
+        val chunks = out.split(marker)
+        paths.indices.map { i -> chunks.getOrNull(i)?.trim()?.ifEmpty { null } }
+    } catch (_: Exception) {
+        paths.map { null }
     }
 }
 
 suspend fun readBatteryInfo(field: String, index: Int): String? = withContext(Dispatchers.IO) {
     try {
-        val raw = SuFileInputStream
-            .open("$OPLUS_CHG_BATTERY_PATH$field")
-            .bufferedReader()
-            .use { it.readText().trim() }
+        val raw = readRootFile("$OPLUS_CHG_BATTERY_PATH$field") ?: return@withContext null
 
         val parts = raw.split(",")
         if (field == "bcc_parms" && parts.size - 1 != BCC_CURRENT_INDICES_LAST) {

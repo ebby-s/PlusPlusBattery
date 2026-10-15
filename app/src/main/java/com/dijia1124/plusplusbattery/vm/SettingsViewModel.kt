@@ -50,6 +50,8 @@ class SettingsViewModel @Inject constructor(
 
     private suspend fun hasRootAccess(): Boolean = withContext(Dispatchers.IO) {
         try {
+            // Prefer libsu's shell state: that is what the root file reads use.
+            if (Shell.getShell().isRoot) return@withContext true
             Shell.cmd("su -c whoami").exec().isSuccess
         } catch (e: Exception) {
             false

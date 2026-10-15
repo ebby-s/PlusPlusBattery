@@ -236,14 +236,14 @@ fun SettingsContent(
                             CustomSwitch(
                                 checked = isRootMode,
                                 onCheckedChange = { desired ->
-                                    if (desired) {
-                                        if (hasRoot) batteryVM.setRootMode(true)
-                                        else Toast.makeText(
+                                    if (desired && !hasRoot) {
+                                        Toast.makeText(
                                             context,
                                             context.getString(R.string.root_access_denied),
                                             Toast.LENGTH_SHORT
                                         ).show()
-                                    } else batteryVM.setRootMode(false)
+                                    }
+                                    batteryVM.setRootMode(desired)
                                 }
                             )
                         }

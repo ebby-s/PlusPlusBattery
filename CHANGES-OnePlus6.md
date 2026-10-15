@@ -106,3 +106,15 @@ Adds an AccuBattery-style subsystem (clean-room, no third-party code copied).
 ### Database
 - Room v1 -> v2 -> v3 with real migrations; existing cycle history preserved.
 
+### Root read robustness
+- libsu can cache a non-root shell if the first su request raced the Magisk
+  prompt (e.g. the device was locked). Root reads then all came back empty
+  ("unknown") even though `su -c whoami` still succeeded.
+- Root reads now check the cached shell and, when it is not root, fall back to a
+  batched `su -c` read (one invocation for all nodes), so root mode works
+  regardless.
+- `hasRoot` now reflects libsu's shell state, and root mode is a persisted user
+  preference that is no longer auto-disabled when root is momentarily
+  unavailable.
+
+

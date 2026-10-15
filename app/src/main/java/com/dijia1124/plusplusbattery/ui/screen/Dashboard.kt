@@ -375,10 +375,8 @@ fun DashBoardContent(hasRoot: Boolean, batteryInfoViewModel: BatteryInfoViewMode
     var chartStartTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     LaunchedEffect(isRootMode, hasRoot, lifecycleOwner, isCelsius) {
-        if (!hasRoot && isRootMode) {
-            batteryInfoViewModel.setRootMode(false)
-        }
-
+        // Root mode is a user preference and is kept across launches; if root is
+        // temporarily unavailable the entries simply show as unknown.
         lifecycleOwner.lifecycle
             .repeatOnLifecycle(Lifecycle.State.STARTED) {
                 // Reset power chart data when entering foreground
@@ -963,7 +961,8 @@ fun ExpandableFab(
                 ExtendedFloatingActionButton(
                     onClick = {
                         if (!isRootMode) {
-                            if (hasRoot) onToggleRootMode(true) else context.showRootDeniedToast()
+                            if (!hasRoot) context.showRootDeniedToast()
+                            onToggleRootMode(true)
                         } else {
                             onToggleRootMode(false)
                         }
